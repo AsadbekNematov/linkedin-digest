@@ -44,14 +44,13 @@ export function StatsRings({ posts }: StatsRingsProps) {
   const activeArc = hovered ? arcs.find((a) => a.cat === hovered) : null
 
   return (
-    <div className="flex flex-col md:flex-row items-center gap-10">
+    <div className="flex flex-col md:flex-row items-center gap-10" onMouseLeave={() => setHovered(null)}>
 
       {/* Donut */}
       <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
         <svg
           width={SIZE} height={SIZE}
           style={{ display: "block" }}
-          onMouseLeave={() => setHovered(null)}
         >
           {/* Track */}
           <circle
