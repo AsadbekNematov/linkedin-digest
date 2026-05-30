@@ -25,12 +25,7 @@ export function TypewriterHero() {
       <h2 className="text-4xl md:text-6xl font-bold tracking-tight mb-4 leading-tight">
         <span className="text-white">Your network,</span>
         <br />
-        <span className="inline-flex items-center gap-0" style={{
-          background: "linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          backgroundClip: "text",
-        }}>
+        <span className="inline-flex items-center gap-1">
           <AnimatePresence mode="wait">
             <motion.span
               key={index}
@@ -39,6 +34,12 @@ export function TypewriterHero() {
               exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
               transition={{ duration: 0.4, ease: "easeInOut" }}
               className="inline-block"
+              style={{
+                background: "linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+              }}
             >
               {CYCLES[index]}
             </motion.span>
@@ -46,8 +47,8 @@ export function TypewriterHero() {
           <motion.span
             animate={{ opacity: [1, 0, 1] }}
             transition={{ duration: 0.9, repeat: Infinity }}
-            className="ml-1 text-5xl font-light"
-            style={{ WebkitTextFillColor: "#8b5cf6" }}
+            className="font-light"
+            style={{ color: "#8b5cf6" }}
           >
             |
           </motion.span>
