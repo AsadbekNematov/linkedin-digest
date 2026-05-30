@@ -22,6 +22,11 @@
       "matches": ["https://www.linkedin.com/feed/*", "https://www.linkedin.com/"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:3000/*", "http://localhost/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {

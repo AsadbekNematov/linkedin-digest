@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import Masonry from "react-masonry-css"
 import { Toaster, toast } from "react-hot-toast"
@@ -15,7 +15,7 @@ import { ParticlesBackground } from "@/components/ParticlesBackground"
 import { TypewriterHero } from "@/components/TypewriterHero"
 import { ActivityTicker } from "@/components/ActivityTicker"
 import { PostDetailPanel } from "@/components/PostDetailPanel"
-import { mockPosts, categoryConfig, type Post, type Category } from "@/lib/mockData"
+import { mockPosts, type Post, type Category } from "@/lib/mockData"
 
 const MASONRY_COLS = { default: 3, 1280: 3, 1024: 2, 768: 2, 640: 1 }
 
@@ -49,62 +49,114 @@ function fireConfetti() {
   frame()
 }
 
+function readDigestState() {
+  if (typeof window === "undefined") {
+    return { posts: mockPosts, lastRefresh: "just now (demo)" }
+  }
+
+  const saved = localStorage.getItem("linkedin-digest-posts")
+  if (saved) {
+    return {
+      posts: JSON.parse(saved) as Post[],
+      lastRefresh: localStorage.getItem("linkedin-digest-refresh") || null,
+    }
+  }
+
+  return { posts: mockPosts, lastRefresh: "just now (demo)" }
+}
+
+function subscribeToDigestState(callback: () => void) {
+  if (typeof window === "undefined") return () => {}
+
+  const handler = () => callback()
+  window.addEventListener("storage", handler)
+  window.addEventListener("linkedin-digest-sync", handler)
+
+  return () => {
+    window.removeEventListener("storage", handler)
+    window.removeEventListener("linkedin-digest-sync", handler)
+  }
+}
+
+function getDigestSnapshot() {
+  return JSON.stringify(readDigestState())
+}
+
 export default function Home() {
-  const [posts, setPosts] = useState<Post[]>([])
+  const digestSnapshot = useSyncExternalStore(subscribeToDigestState, getDigestSnapshot, getDigestSnapshot)
+  const { posts, lastRefresh } = JSON.parse(digestSnapshot) as {
+    posts: Post[]
+    lastRefresh: string | null
+  }
+
   const [activeCategory, setActiveCategory] = useState<Category | null>(null)
   const [phase, setPhase] = useState<Phase>("idle")
-  const [lastRefresh, setLastRefresh] = useState<string | null>(null)
   const [selectedPost, setSelectedPost] = useState<Post | null>(null)
+  const [targetCount, setTargetCount] = useState(() => {
+    if (typeof window === "undefined") return 30
+    return Number(localStorage.getItem("linkedin-digest-target-count")) || 30
+  })
 
   useEffect(() => {
-    const version = localStorage.getItem("linkedin-digest-version")
-    if (version !== "2") {
-      localStorage.removeItem("linkedin-digest-posts")
-      localStorage.removeItem("linkedin-digest-refresh")
-      localStorage.setItem("linkedin-digest-version", "2")
+    const handleCountSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ count?: number }>).detail
+      const nextCount = Number(detail?.count) || 30
+      setTargetCount(nextCount)
+      localStorage.setItem("linkedin-digest-target-count", String(nextCount))
     }
-    const saved = localStorage.getItem("linkedin-digest-posts")
-    if (saved) {
-      setPosts(JSON.parse(saved))
-      setLastRefresh(localStorage.getItem("linkedin-digest-refresh") || null)
-    } else {
-      setPosts(mockPosts)
-      setLastRefresh("just now (demo)")
-    }
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "linkedin-digest-posts" && e.newValue) {
-        setPosts(JSON.parse(e.newValue))
-        const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        setLastRefresh(now)
+
+    window.addEventListener("linkedin-digest-target-count-sync", handleCountSync)
+    return () => window.removeEventListener("linkedin-digest-target-count-sync", handleCountSync)
+  }, [])
+
+  useEffect(() => {
+    const handleComplete = (event: Event) => {
+      const detail = (event as CustomEvent<{ success?: boolean; count?: number; error?: string }>).detail
+
+      if (!detail) return
+
+      setPhase("idle")
+
+      if (detail.success) {
+        const capturedCount = detail.count ?? posts.length
+        fireConfetti()
+        setPhase("idle")
+        toast.success(`${capturedCount} posts captured & summarized`, {
+          style: {
+            background: "rgba(16,16,28,0.95)",
+            border: "1px solid rgba(16,185,129,0.3)",
+            color: "#6ee7b7",
+            backdropFilter: "blur(12px)",
+            fontSize: "13px",
+          },
+          iconTheme: { primary: "#10b981", secondary: "#07070f" },
+        })
+      } else {
+        setPhase("idle")
+        toast.error(detail.error || "Refresh failed", {
+          style: {
+            background: "rgba(16,16,28,0.95)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            color: "#fca5a5",
+            backdropFilter: "blur(12px)",
+            fontSize: "13px",
+          },
+        })
       }
     }
-    window.addEventListener("storage", onStorage)
-    return () => window.removeEventListener("storage", onStorage)
-  }, [])
+
+    window.addEventListener("linkedin-digest-refresh-complete", handleComplete)
+    return () => window.removeEventListener("linkedin-digest-refresh-complete", handleComplete)
+  }, [posts.length])
 
   const handleRefresh = async () => {
     setPhase("fetching")
-    await new Promise((r) => setTimeout(r, 1800))
+    window.dispatchEvent(
+      new CustomEvent("linkedin-digest-start-refresh", {
+        detail: { count: targetCount },
+      })
+    )
     setPhase("summarizing")
-    await new Promise((r) => setTimeout(r, 1400))
-    const shuffled = [...mockPosts].sort(() => Math.random() - 0.5)
-    setPosts(shuffled)
-    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    setLastRefresh(now)
-    localStorage.setItem("linkedin-digest-posts", JSON.stringify(shuffled))
-    localStorage.setItem("linkedin-digest-refresh", now)
-    setPhase("idle")
-    fireConfetti()
-    toast.success(`${shuffled.length} posts captured & summarized`, {
-      style: {
-        background: "rgba(16,16,28,0.95)",
-        border: "1px solid rgba(16,185,129,0.3)",
-        color: "#6ee7b7",
-        backdropFilter: "blur(12px)",
-        fontSize: "13px",
-      },
-      iconTheme: { primary: "#10b981", secondary: "#07070f" },
-    })
   }
 
   const filtered = activeCategory ? posts.filter((p) => p.category === activeCategory) : posts
@@ -145,7 +197,42 @@ export default function Home() {
               </div>
             </motion.div>
             <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }}>
-              <RefreshButton phase={phase} onClick={handleRefresh} lastRefresh={lastRefresh} />
+              <div className="flex flex-col items-end gap-2">
+                <div className="flex items-end gap-2">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#374151" }}>
+                      Posts to collect
+                    </span>
+                    <input
+                      type="number"
+                      min={5}
+                      max={100}
+                      value={targetCount}
+                      onChange={(event) => {
+                        const nextCount = Number(event.target.value) || 30
+                        setTargetCount(nextCount)
+                        localStorage.setItem("linkedin-digest-target-count", String(nextCount))
+                        window.dispatchEvent(new CustomEvent("linkedin-digest-target-count-change", {
+                          detail: { count: nextCount },
+                        }))
+                      }}
+                      className="w-24 rounded-xl px-3 py-2 text-sm outline-none"
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        color: "#f0f0ff",
+                      }}
+                    />
+                  </div>
+                  <RefreshButton phase={phase} onClick={handleRefresh} lastRefresh={lastRefresh} />
+                </div>
+                {phase !== "idle" && (
+                  <span className="text-xs" style={{ color: "#6b7280" }}>
+                    {phase === "fetching" && "Handing request to the extension..."}
+                    {phase === "summarizing" && "Waiting for LinkedIn scrape and AI summary..."}
+                  </span>
+                )}
+              </div>
             </motion.div>
           </div>
 
