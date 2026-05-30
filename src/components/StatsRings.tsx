@@ -17,13 +17,17 @@ const R = (SIZE - STROKE_HOVER) / 2
 const CIRC = 2 * Math.PI * R
 const GAP = 2.5
 
-interface StatsRingsProps { posts: Post[] }
+interface StatsRingsProps {
+  posts: Post[]
+  activeCategory: Category | null
+  onSelect: (cat: Category | null) => void
+}
 
 function degreesToOffset(degrees: number) {
   return (degrees / 360) * CIRC
 }
 
-export function StatsRings({ posts }: StatsRingsProps) {
+export function StatsRings({ posts, activeCategory, onSelect }: StatsRingsProps) {
   const [hovered, setHovered] = useState<Category | null>(null)
   const total = posts.length
   if (!total) return null
@@ -41,7 +45,7 @@ export function StatsRings({ posts }: StatsRingsProps) {
     return { ...s, deg, offset, rotation }
   })
 
-  const activeArc = hovered ? arcs.find((a) => a.cat === hovered) : null
+  const activeArc = (hovered ?? activeCategory) ? arcs.find((a) => a.cat === (hovered ?? activeCategory)) : null
 
   return (
     <div className="flex flex-col md:flex-row items-center gap-10" onMouseLeave={() => setHovered(null)}>
@@ -59,18 +63,21 @@ export function StatsRings({ posts }: StatsRingsProps) {
             stroke="rgba(255,255,255,0.04)"
             strokeWidth={STROKE}
           />
-          {/* Invisible center hit area to reset hover */}
+          {/* Center hit area — click to deselect, hover to reset */}
           <circle
             cx={SIZE / 2} cy={SIZE / 2} r={R - STROKE}
             fill="transparent"
-            style={{ cursor: "default" }}
+            style={{ cursor: activeCategory ? "pointer" : "default" }}
             onMouseEnter={() => setHovered(null)}
+            onClick={() => onSelect(null)}
           />
 
           {arcs.map((arc, i) => {
             const config = categoryConfig[arc.cat]
+            const isActive = activeCategory === arc.cat
             const isHovered = hovered === arc.cat
-            const isDimmed = hovered !== null && !isHovered
+            const isHighlighted = isHovered || isActive
+            const isDimmed = (hovered !== null && !isHovered) || (activeCategory !== null && !isActive && hovered === null)
 
             return (
               <motion.circle
@@ -83,8 +90,8 @@ export function StatsRings({ posts }: StatsRingsProps) {
                 initial={{ strokeDashoffset: CIRC, strokeWidth: STROKE }}
                 animate={{
                   strokeDashoffset: arc.offset,
-                  strokeWidth: isHovered ? STROKE_HOVER : STROKE,
-                  opacity: isDimmed ? 0.25 : 1,
+                  strokeWidth: isHighlighted ? STROKE_HOVER : STROKE,
+                  opacity: isDimmed ? 0.2 : 1,
                 }}
                 transition={{
                   strokeDashoffset: { delay: i * 0.07 + 0.1, duration: 0.9, ease: "easeOut" },
@@ -95,11 +102,12 @@ export function StatsRings({ posts }: StatsRingsProps) {
                   transformOrigin: `${SIZE / 2}px ${SIZE / 2}px`,
                   transform: `rotate(${arc.rotation - 90}deg)`,
                   filter: isHovered
-                    ? `drop-shadow(0 0 12px ${config.color})`
-                    : `drop-shadow(0 0 4px ${config.color}60)`,
+                    ? `drop-shadow(0 0 8px ${config.color}cc)`
+                    : `drop-shadow(0 0 3px ${config.color}50)`,
                   cursor: "pointer",
                 }}
                 onMouseEnter={() => setHovered(arc.cat)}
+                onClick={() => onSelect(isActive ? null : arc.cat)}
               />
             )
           })}
