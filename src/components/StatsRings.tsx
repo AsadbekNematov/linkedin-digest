@@ -11,13 +11,10 @@ const SHOW: Category[] = [
 ]
 
 const SIZE = 200
-const PAD = 8          // extra space so expanded stroke isn't clipped
 const STROKE = 22
 const R = (SIZE - STROKE) / 2
 const CIRC = 2 * Math.PI * R
 const GAP = 3
-const VIEWBOX = SIZE + PAD * 2
-const CENTER = VIEWBOX / 2
 
 interface StatsRingsProps {
   posts: Post[]
@@ -57,11 +54,11 @@ export function StatsRings({ posts, activeCategory, onSelect }: StatsRingsProps)
       onMouseLeave={() => setHovered(null)}
     >
       {/* Donut */}
-      <div className="relative shrink-0" style={{ width: VIEWBOX, height: VIEWBOX }}>
-        <svg width={VIEWBOX} height={VIEWBOX} style={{ display: "block" }}>
+      <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
+        <svg width={SIZE} height={SIZE} style={{ display: "block", overflow: "visible" }}>
           {/* Track */}
           <circle
-            cx={CENTER} cy={CENTER} r={R}
+            cx={SIZE / 2} cy={SIZE / 2} r={R}
             fill="none"
             stroke="rgba(255,255,255,0.04)"
             strokeWidth={STROKE}
@@ -78,7 +75,7 @@ export function StatsRings({ posts, activeCategory, onSelect }: StatsRingsProps)
             return (
               <motion.circle
                 key={arc.cat}
-                cx={CENTER} cy={CENTER} r={R}
+                cx={SIZE / 2} cy={SIZE / 2} r={R}
                 fill="none"
                 stroke={config.color}
                 strokeLinecap="round"
@@ -95,7 +92,7 @@ export function StatsRings({ posts, activeCategory, onSelect }: StatsRingsProps)
                   opacity: { duration: 0.15 },
                 }}
                 style={{
-                  transformOrigin: `${CENTER}px ${CENTER}px`,
+                  transformOrigin: `${SIZE / 2}px ${SIZE / 2}px`,
                   transform: `rotate(${arc.rotation - 90}deg)`,
                   filter: isFocused
                     ? `drop-shadow(0 0 7px ${config.color}bb)`
@@ -110,7 +107,7 @@ export function StatsRings({ posts, activeCategory, onSelect }: StatsRingsProps)
 
           {/* Center click-to-clear zone */}
           <circle
-            cx={CENTER} cy={CENTER} r={R - STROKE - 2}
+            cx={SIZE / 2} cy={SIZE / 2} r={R - STROKE - 2}
             fill="transparent"
             style={{ cursor: activeCategory ? "pointer" : "default" }}
             onMouseEnter={() => setHovered(null)}
