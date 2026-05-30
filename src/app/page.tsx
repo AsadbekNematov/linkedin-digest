@@ -120,6 +120,23 @@ function getProcessLogSnapshot() {
   return JSON.stringify(readProcessLogState())
 }
 
+function appendProcessLog(stage: string, message: string, detail: unknown | null = null) {
+  if (typeof window === "undefined") return
+
+  const key = PROCESS_LOG_KEY
+  const existing = readProcessLogState()
+  const nextEntry: ProcessLogEntry = {
+    at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    stage,
+    message,
+    detail,
+  }
+
+  const next = [...existing.slice(-19), nextEntry]
+  localStorage.setItem(key, JSON.stringify(next))
+  window.dispatchEvent(new CustomEvent("linkedin-digest-process-log", { detail: nextEntry }))
+}
+
 function getDigestSnapshot() {
   return JSON.stringify(readDigestState())
 }
@@ -198,12 +215,64 @@ export default function Home() {
   const handleRefresh = async () => {
     console.log(`[LinkedIn Digest][page] refresh requested: ${targetCount}`)
     setPhase("fetching")
-    window.dispatchEvent(
-      new CustomEvent("linkedin-digest-start-refresh", {
-        detail: { count: targetCount },
+
+    appendProcessLog("starting", "Starting Playwright scrape", { count: targetCount })
+
+    try {
+      const response = await fetch("/api/scrape/playwright", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: targetCount }),
       })
-    )
-    setPhase("summarizing")
+
+      setPhase("summarizing")
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || `Playwright scrape failed (${response.status})`)
+      }
+
+      const capturedPosts = (result.posts || []) as Post[]
+      const refreshTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+
+      localStorage.setItem("linkedin-digest-posts", JSON.stringify(capturedPosts))
+      localStorage.setItem("linkedin-digest-refresh", refreshTime)
+      appendProcessLog("complete", `Website scrape complete with ${capturedPosts.length} summarized posts`, {
+        scrapedCount: result.scrapedCount,
+        savedCount: capturedPosts.length,
+      })
+
+      window.dispatchEvent(new CustomEvent("linkedin-digest-sync", {
+        detail: { posts: capturedPosts, refreshTime },
+      }))
+
+      fireConfetti()
+      toast.success(`${capturedPosts.length} posts captured & summarized`, {
+        style: {
+          background: "rgba(16,16,28,0.95)",
+          border: "1px solid rgba(16,185,129,0.3)",
+          color: "#6ee7b7",
+          backdropFilter: "blur(12px)",
+          fontSize: "13px",
+        },
+        iconTheme: { primary: "#10b981", secondary: "#07070f" },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      appendProcessLog("error", "Playwright website scrape failed", { message })
+      toast.error(message, {
+        style: {
+          background: "rgba(16,16,28,0.95)",
+          border: "1px solid rgba(239,68,68,0.3)",
+          color: "#fca5a5",
+          backdropFilter: "blur(12px)",
+          fontSize: "13px",
+        },
+      })
+    } finally {
+      setPhase("idle")
+    }
   }
 
   const filtered = activeCategory ? posts.filter((p) => p.category === activeCategory) : posts
@@ -275,7 +344,7 @@ export default function Home() {
                 </div>
                 {phase !== "idle" && (
                   <span className="text-xs" style={{ color: "#6b7280" }}>
-                    {phase === "fetching" && "Handing request to the extension..."}
+                    {phase === "fetching" && "Scraping LinkedIn from the website..."}
                     {phase === "summarizing" && "Waiting for LinkedIn scrape and AI summary..."}
                   </span>
                 )}

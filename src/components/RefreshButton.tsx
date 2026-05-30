@@ -12,9 +12,9 @@ interface RefreshButtonProps {
 }
 
 const labels: Record<Phase, string> = {
-  idle: "Refresh Feed",
-  fetching: "Fetching posts...",
-  summarizing: "Summarizing...",
+  idle: "Run Playwright",
+  fetching: "Scraping feed...",
+  summarizing: "Processing...",
 }
 
 export function RefreshButton({ phase, onClick, lastRefresh }: RefreshButtonProps) {
