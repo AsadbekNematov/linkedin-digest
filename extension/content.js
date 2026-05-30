@@ -5,6 +5,7 @@ const TARGET_COUNT_KEY = "linkedin-digest-target-count"
 const DEBUG = true
 const PRIMARY_POST_SELECTORS = ".feed-shared-update-v2, .occludable-update, [data-urn], article, [role='article']"
 const POST_LINK_SELECTORS = "a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/pulse/']"
+const FALLBACK_CONTAINER_SELECTORS = "[data-urn], article, [role='article'], .feed-shared-update-v2, .occludable-update"
 
 function log(...args) {
   if (DEBUG) console.log("[LinkedIn Digest][content]", ...args)
@@ -25,16 +26,26 @@ function findFallbackContainer(anchor) {
   let node = anchor
   let depth = 0
   let bestNode = null
+  let bestScore = -1
 
   while (node && depth < 8) {
     const text = node.innerText?.trim() || ""
-    const hasUsefulText = text.length > 120
-    const hasStructure =
-      node.matches?.("[data-urn], article, [role='article'], .feed-shared-update-v2, .occludable-update") ||
+    const hasStructure = node.matches?.(FALLBACK_CONTAINER_SELECTORS) ||
       node.querySelector?.(".feed-shared-actor__name, .update-components-actor__name, .feed-shared-text, .update-components-text, [data-test-id='post-text'], [data-test-id='feed-shared-text-view']")
+    const hasUsefulText = text.length > 30
 
-    if (hasUsefulText && hasStructure) return node
-    if (hasUsefulText && !bestNode) bestNode = node
+    let score = 0
+    if (hasUsefulText) score += Math.min(text.length, 600)
+    if (hasStructure) score += 250
+    if (node.querySelector?.("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/pulse/']")) score += 100
+    if (node.matches?.("main, section, div")) score += 10
+
+    if (score > bestScore) {
+      bestScore = score
+      bestNode = node
+    }
+
+    if (hasStructure && hasUsefulText && text.length > 60) return node
     node = node.parentElement
     depth++
   }
@@ -47,6 +58,7 @@ function collectCandidateArticles() {
   if (primary.length > 0) return { source: "primary", articles: primary }
 
   const anchors = Array.from(document.querySelectorAll(POST_LINK_SELECTORS))
+  const anchorsDetails = anchors.slice(0, 8).map((a) => ({ href: a.href, outerHTML: (a.outerHTML || "").slice(0, 800) }))
   const seen = new Set()
   const fallback = []
 
@@ -58,7 +70,7 @@ function collectCandidateArticles() {
     fallback.push(container)
   }
 
-  return { source: "fallback-links", articles: fallback, anchorsFound: anchors.length }
+  return { source: "fallback-links", articles: fallback, anchorsFound: anchors.length, anchorsDetails }
 }
 
 function scrapePostKey(article) {
@@ -96,6 +108,132 @@ function cleanPostText(rawText) {
   return filtered.join("\n").trim()
 }
 
+function normalizeLinkedInUrl(rawUrl) {
+  if (!rawUrl) return "https://www.linkedin.com/feed/"
+
+  try {
+    const url = new URL(rawUrl, "https://www.linkedin.com")
+    url.hash = ""
+    url.search = ""
+
+    const reactionMatch = url.pathname.match(/^(\/feed\/update\/[^/]+)(?:\/(?:reactions|comments)\/?.*)?$/)
+    if (reactionMatch) {
+      url.pathname = `${reactionMatch[1]}/`
+      return url.toString()
+    }
+
+    url.pathname = url.pathname.replace(/\/(?:reactions|comments)\/?.*$/i, "/")
+    return url.toString()
+  } catch {
+    return String(rawUrl).replace(/\/(?:reactions|comments)\/?.*$/i, "/")
+  }
+}
+
+function normalizeCountText(rawText) {
+  const text = (rawText || "").trim().toLowerCase()
+  if (!text) return 0
+  if (text === "like" || text === "likes" || text === "reaction" || text === "reactions") return 0
+
+  const compactMatch = text.match(/(\d+(?:[.,]\d+)?)([kmb])?/) 
+  if (!compactMatch) return 0
+
+  const value = Number.parseFloat(compactMatch[1].replace(/,/g, ""))
+  if (Number.isNaN(value)) return 0
+
+  const suffix = compactMatch[2]
+  if (suffix === "k") return Math.round(value * 1000)
+  if (suffix === "m") return Math.round(value * 1000000)
+  if (suffix === "b") return Math.round(value * 1000000000)
+  return Math.round(value)
+}
+
+function inferAuthorAndTitle(article, rawText) {
+  const selectors = [
+    ".update-components-actor__name span[aria-hidden='true']",
+    ".feed-shared-actor__name span[aria-hidden='true']",
+    ".update-components-actor__name",
+    ".feed-shared-actor__name",
+    "[data-test-id='actor-name']",
+    "[data-test-id='feed-shared-actor-name']",
+  ]
+
+  for (const selector of selectors) {
+    const node = article.querySelector(selector)
+    const text = cleanPostText(node?.innerText || node?.textContent || "")
+    if (text) {
+      const name = text.split(/\n+/)[0].replace(/\s+/g, " ").trim()
+      if (name && name.length <= 80) return { author: name, authorTitle: "" }
+    }
+  }
+
+  const lines = (rawText || "")
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+
+  const noisePatterns = [
+    /^follow$/i,
+    /^promoted$/i,
+    /^suggested$/i,
+    /^likes this$/i,
+    /^commented on this$/i,
+    /^reposted this$/i,
+    /^loves this$/i,
+    /^celebrates this$/i,
+    /^\d+[hmwd]$/i,
+    /^\d+[hmwd] ago$/i,
+    /^edited$/i,
+    /^see more$/i,
+  ]
+
+  const bodyIndex = lines.findIndex((line) => !noisePatterns.some((pattern) => pattern.test(line)))
+  const author = bodyIndex >= 0 ? lines[bodyIndex] : "Unknown"
+  const authorTitle = bodyIndex >= 0 ? lines[bodyIndex + 1] || "" : ""
+
+  return {
+    author: author || "Unknown",
+    authorTitle,
+  }
+}
+
+function inferSocialCounts(article, rawText) {
+  const selectorCandidates = [
+    ".social-details-social-counts__reactions-count",
+    ".social-details-social-counts__comments",
+    ".feed-shared-social-action-bar__action-count",
+    "[data-test-id='social-actions-reactions-count']",
+    "[data-test-id='social-actions-comments-count']",
+    "[aria-label*='reactions']",
+    "[aria-label*='reaction']",
+    "[aria-label*='comment']",
+  ]
+
+  const textCandidates = Array.from(article.querySelectorAll(selectorCandidates.join(",")))
+    .map((node) => cleanPostText(node.innerText || node.textContent || node.getAttribute("aria-label") || ""))
+    .filter(Boolean)
+
+  let reactions = 0
+  let comments = 0
+
+  for (const text of textCandidates) {
+    const lower = text.toLowerCase()
+    if (!reactions && /(reaction|reactions|like|likes)/.test(lower)) reactions = normalizeCountText(lower)
+    if (!comments && /comment/.test(lower)) comments = normalizeCountText(lower)
+  }
+
+  const bodyText = (rawText || "").toLowerCase()
+  if (!reactions) {
+    const match = bodyText.match(/(?:^|\n|\b)(\d+(?:[.,]\d+)?[kmb]?)\s+(?:reactions?|likes?)\b/)
+    reactions = match ? normalizeCountText(match[1]) : 0
+  }
+  if (!comments) {
+    const match = bodyText.match(/(?:^|\n|\b)(\d+(?:[.,]\d+)?[kmb]?)\s+comments?\b/)
+    comments = match ? normalizeCountText(match[1]) : 0
+  }
+
+  return { reactions, comments }
+}
+
 function extractPostText(article) {
   const selectors = [
     ".feed-shared-update-v2__description",
@@ -123,17 +261,9 @@ function extractPostText(article) {
 
 async function scrapePost(article) {
   try {
-    // Author name
-    const authorEl = article.querySelector(
-      ".update-components-actor__name span[aria-hidden='true'], .feed-shared-actor__name span[aria-hidden='true']"
-    )
-    const author = authorEl?.innerText?.trim() || "Unknown"
+    const rawArticleText = article.innerText || article.textContent || ""
 
-    // Author title/headline
-    const titleEl = article.querySelector(
-      ".update-components-actor__description span[aria-hidden='true'], .feed-shared-actor__description span[aria-hidden='true']"
-    )
-    const authorTitle = titleEl?.innerText?.trim() || ""
+    const { author, authorTitle } = inferAuthorAndTitle(article, rawArticleText)
 
     // Post text — expand "see more" if possible
     const seeMoreBtn = article.querySelector(".feed-shared-inline-show-more-text__see-more-less-toggle, .see-more")
@@ -147,28 +277,17 @@ async function scrapePost(article) {
       log("No usable text extracted", {
         author,
         title: authorTitle,
-        articlePreview: article.innerText?.slice(0, 200) || "",
+        articlePreview: rawArticleText.slice(0, 200) || "",
       })
       return null
     }
 
     // Post URL — try to find the permalink
     const linkEl = article.querySelector("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/pulse/']")
-    const linkedinUrl = linkEl?.href || "https://www.linkedin.com/feed/"
+    const linkedinUrl = normalizeLinkedInUrl(linkEl?.href || "https://www.linkedin.com/feed/")
 
     // Reactions count
-    const reactionsEl = article.querySelector(
-      ".social-details-social-counts__reactions-count, .feed-shared-social-action-bar__action-count"
-    )
-    const reactionsText = reactionsEl?.innerText?.trim() || "0"
-    const reactions = parseInt(reactionsText.replace(/[^0-9]/g, "")) || 0
-
-    // Comments count
-    const commentsEl = article.querySelector(
-      ".social-details-social-counts__comments, .feed-shared-social-action-bar__action-count:last-child"
-    )
-    const commentsText = commentsEl?.innerText?.trim() || "0"
-    const comments = parseInt(commentsText.replace(/[^0-9]/g, "")) || 0
+    const { reactions, comments } = inferSocialCounts(article, rawArticleText)
 
     // Timestamp
     const timeEl = article.querySelector(
@@ -222,6 +341,7 @@ async function scrollAndCollect(targetCount = 30) {
         bodyChildren: document.body?.children?.length || 0,
         anchorsWithPostLinks: document.querySelectorAll(POST_LINK_SELECTORS).length,
         sampleBodyText: document.body?.innerText?.slice(0, 500) || "",
+        anchorsSample: (typeof anchorsDetails !== 'undefined') ? anchorsDetails : undefined,
       })
     }
 
