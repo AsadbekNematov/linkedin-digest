@@ -16,26 +16,28 @@ async function startRefresh(count) {
     // Find or open LinkedIn feed tab
     const tabs = await chrome.tabs.query({ url: "https://www.linkedin.com/feed/*" })
     let tab
+    let wasExisting = tabs.length > 0
 
-    if (tabs.length > 0) {
+    if (wasExisting) {
       tab = tabs[0]
       await chrome.tabs.update(tab.id, { active: true })
+      // Give the page a moment to be ready
+      await new Promise((r) => setTimeout(r, 800))
     } else {
       tab = await chrome.tabs.create({ url: LINKEDIN_FEED_URL, active: true })
-      // Wait for page to load
       await waitForTabLoad(tab.id)
-      await new Promise((r) => setTimeout(r, 2500))
+      // Wait for LinkedIn's JS to render the feed
+      await new Promise((r) => setTimeout(r, 4000))
     }
 
-    // Inject content script if not already there
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["content.js"],
-      })
-    } catch (_) {
-      // Already injected, fine
-    }
+    // Always inject fresh — executeScript handles duplicates fine
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content.js"],
+    })
+
+    // Small delay to ensure injection settled
+    await new Promise((r) => setTimeout(r, 500))
 
     // Trigger scraping
     const response = await chrome.tabs.sendMessage(tab.id, {
@@ -44,7 +46,7 @@ async function startRefresh(count) {
     })
 
     if (!response?.success || !response.posts?.length) {
-      return { success: false, error: "No posts scraped" }
+      return { success: false, error: "No posts found — make sure you're logged into LinkedIn" }
     }
 
     // Send posts to dashboard API
@@ -55,11 +57,34 @@ async function startRefresh(count) {
     })
 
     if (!apiResponse.ok) {
-      return { success: false, error: "Dashboard API error" }
+      const text = await apiResponse.text()
+      return { success: false, error: `Dashboard API error: ${text.slice(0, 100)}` }
     }
 
     const result = await apiResponse.json()
-    return { success: true, count: result.posts?.length || 0 }
+
+    // Write processed posts to localStorage so dashboard picks them up
+    const processed = result.posts || []
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+
+    // Inject a tiny script into the dashboard tab to update localStorage
+    const dashTabs = await chrome.tabs.query({ url: "http://localhost:3000/*" })
+    if (dashTabs.length > 0) {
+      await chrome.scripting.executeScript({
+        target: { tabId: dashTabs[0].id },
+        func: (posts, time) => {
+          localStorage.setItem("linkedin-digest-posts", JSON.stringify(posts))
+          localStorage.setItem("linkedin-digest-refresh", time)
+          window.dispatchEvent(new StorageEvent("storage", {
+            key: "linkedin-digest-posts",
+            newValue: JSON.stringify(posts),
+          }))
+        },
+        args: [processed, now],
+      })
+    }
+
+    return { success: true, count: processed.length }
   } catch (err) {
     return { success: false, error: err.message }
   }

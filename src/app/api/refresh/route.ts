@@ -5,11 +5,15 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 type Category =
   | "job_opportunity"
-  | "congratulations"
+  | "career_milestone"
   | "industry_news"
   | "thought_leadership"
-  | "personal_update"
-  | "other"
+  | "startup_funding"
+  | "product_launch"
+  | "learning_growth"
+  | "event_conference"
+  | "congratulations"
+  | "personal_story"
 
 interface RawPost {
   id: string
@@ -55,7 +59,7 @@ async function processPostBatch(posts: RawPost[]): Promise<ProcessedPost[]> {
         role: "user",
         content: `Categorize and summarize each LinkedIn post. Return a JSON array with one object per post (same order).
 
-Categories: job_opportunity, congratulations, industry_news, thought_leadership, personal_update, other
+Categories: job_opportunity, career_milestone, industry_news, thought_leadership, startup_funding, product_launch, learning_growth, event_conference, congratulations, personal_story
 
 For each post return:
 - index: number
