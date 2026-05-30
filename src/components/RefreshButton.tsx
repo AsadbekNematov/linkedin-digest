@@ -64,7 +64,7 @@ export function RefreshButton({ phase, onClick, lastRefresh }: RefreshButtonProp
       </motion.button>
 
       {lastRefresh && (
-        <span className="text-xs" style={{ color: "#374151" }}>
+        <span className="text-xs" style={{ color: "#374151" }} suppressHydrationWarning>
           Updated {lastRefresh}
         </span>
       )}
