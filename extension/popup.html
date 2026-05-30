@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Digest</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 280px;
+      background: #0a0a0f;
+      color: #f0f0ff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 20px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      background: rgba(0, 119, 181, 0.15);
+      border: 1px solid rgba(0, 119, 181, 0.3);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .title { font-size: 15px; font-weight: 700; }
+    .subtitle { font-size: 11px; color: #4a4a6a; margin-top: 1px; }
+
+    .btn {
+      width: 100%;
+      padding: 11px;
+      border-radius: 10px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.05);
+      color: #8888aa;
+      border: 1px solid #1c1c2e;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.08); color: #f0f0ff; }
+
+    .status {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+    }
+    .status.info { background: rgba(59,130,246,0.1); color: #93c5fd; border: 1px solid rgba(59,130,246,0.2); }
+    .status.success { background: rgba(16,185,129,0.1); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); }
+    .status.error { background: rgba(239,68,68,0.1); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+    .status.show { display: block; }
+
+    .spinner {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .count-input {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid #1c1c2e;
+      border-radius: 8px;
+      color: #f0f0ff;
+      font-size: 12px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .count-input:focus { border-color: rgba(59,130,246,0.4); }
+    .count-label { font-size: 11px; color: #4a4a6a; margin-bottom: 5px; }
+
+    .footer { margin-top: 16px; text-align: center; font-size: 10px; color: #2a2a3e; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">🔗</div>
+    <div>
+      <div class="title">LinkedIn Digest</div>
+      <div class="subtitle">Feed summarizer</div>
+    </div>
+  </div>
+
+  <p class="count-label">Posts to collect</p>
+  <input class="count-input" type="number" id="countInput" value="30" min="5" max="100" />
+
+  <button class="btn btn-primary" id="refreshBtn">
+    ↻ &nbsp;Refresh Feed Now
+  </button>
+
+  <button class="btn btn-secondary" id="openDashboard">
+    Open Dashboard →
+  </button>
+
+  <div class="status" id="status"></div>
+
+  <div class="footer">linkedin-digest · localhost:3000</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

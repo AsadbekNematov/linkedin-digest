@@ -37,9 +37,21 @@ export default function Home() {
       setPosts(mockPosts)
       setLastRefresh("just now (demo)")
     }
+
+    // Listen for extension writing new posts via storage event
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "linkedin-digest-posts" && e.newValue) {
+        setPosts(JSON.parse(e.newValue))
+        setLastRefresh(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
   }, [])
 
   const handleRefresh = async () => {
+    // If Chrome extension is installed, it handles the refresh itself via popup.
+    // This button simulates the flow in demo mode (no extension).
     setPhase("fetching")
     await new Promise((r) => setTimeout(r, 1800))
     setPhase("summarizing")
