@@ -48,13 +48,24 @@ export function StatsRings({ posts }: StatsRingsProps) {
 
       {/* Donut */}
       <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
-        <svg width={SIZE} height={SIZE} style={{ display: "block" }}>
+        <svg
+          width={SIZE} height={SIZE}
+          style={{ display: "block" }}
+          onMouseLeave={() => setHovered(null)}
+        >
           {/* Track */}
           <circle
             cx={SIZE / 2} cy={SIZE / 2} r={R}
             fill="none"
             stroke="rgba(255,255,255,0.04)"
             strokeWidth={STROKE}
+          />
+          {/* Invisible center hit area to reset hover */}
+          <circle
+            cx={SIZE / 2} cy={SIZE / 2} r={R - STROKE}
+            fill="transparent"
+            style={{ cursor: "default" }}
+            onMouseEnter={() => setHovered(null)}
           />
 
           {arcs.map((arc, i) => {
@@ -90,7 +101,6 @@ export function StatsRings({ posts }: StatsRingsProps) {
                   cursor: "pointer",
                 }}
                 onMouseEnter={() => setHovered(arc.cat)}
-                onMouseLeave={() => setHovered(null)}
               />
             )
           })}
