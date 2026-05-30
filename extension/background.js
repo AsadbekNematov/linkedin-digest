@@ -5,9 +5,36 @@ const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/"
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const DEBUG = true
+let activeDashboardTabId = null
 
 function log(...args) {
   if (DEBUG) console.log("[LinkedIn Digest][background]", ...args)
+}
+
+async function publishProcessUpdate(tabId, event) {
+  if (!tabId || !event) return
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (processEvent) => {
+        const key = "linkedin-digest-process-log"
+        const existing = JSON.parse(localStorage.getItem(key) || "[]")
+        const nextEntry = {
+          at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          stage: processEvent.stage,
+          message: processEvent.message,
+          detail: processEvent.detail || null,
+        }
+        const next = [...existing.slice(-19), nextEntry]
+        localStorage.setItem(key, JSON.stringify(next))
+        window.dispatchEvent(new CustomEvent("linkedin-digest-process-log", { detail: nextEntry }))
+      },
+      args: [event],
+    })
+  } catch (error) {
+    log("Failed to publish process update", { tabId, error: error?.message || String(error) })
+  }
 }
 
 // Listen for messages from popup
@@ -21,10 +48,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 async function startRefresh(count) {
   try {
     log("START_REFRESH received", { count })
+    const dashboardTab = await ensureDashboardTab()
+    const dashboardTabId = dashboardTab.id
+    activeDashboardTabId = dashboardTabId
+
+    const emit = async (stage, message, detail) => {
+      log(stage, { message, detail })
+      await publishProcessUpdate(dashboardTabId, { stage, message, detail })
+    }
+
+    await emit("starting", "Starting LinkedIn refresh", { count })
     const tab = await openLinkedInFeedTab()
+    await emit("linkedin-tab", "LinkedIn tab ready", { tabId: tab.id })
     await ensureFeedScraperReady(tab.id)
+    await emit("scraper-ready", "Scraper injected and ready", { tabId: tab.id })
 
     // Trigger scraping
+    await emit("scraping", "Collecting LinkedIn posts", { count })
     const response = await chrome.tabs.sendMessage(tab.id, {
       action: "SCRAPE_FEED",
       count,
@@ -37,11 +77,13 @@ async function startRefresh(count) {
     })
 
     if (!response?.success || !response.posts?.length) {
+      await emit("scrape-empty", "No posts captured from LinkedIn", { count })
       log("No posts captured")
       return { success: false, error: "No posts found — make sure you're logged into LinkedIn" }
     }
 
     // Send posts to dashboard API
+    await emit("summarizing", "Sending posts to the dashboard summarizer", { posts: response.posts.length })
     const apiResponse = await fetch(`${DASHBOARD_URL}/api/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -59,8 +101,13 @@ async function startRefresh(count) {
     const result = await apiResponse.json()
 
     const processed = result.posts || []
-    const dashboardTab = await openOrFocusDashboardTab()
+    await emit("dashboard", "Updating dashboard with summarized posts", { posts: processed.length })
     await syncDashboardTab(dashboardTab.id, processed)
+    await publishProcessUpdate(dashboardTab.id, {
+      stage: "complete",
+      message: `Dashboard updated with ${processed.length} summarized posts`,
+      detail: { posts: processed.length },
+    })
 
     log("Dashboard synced", { count: processed.length, dashboardTabId: dashboardTab.id })
 
@@ -76,13 +123,13 @@ async function openLinkedInFeedTab() {
 
   if (tabs.length > 0) {
     const tab = tabs[0]
-    await chrome.tabs.update(tab.id, { active: true })
+    await chrome.tabs.update(tab.id, { active: false })
     await sleep(800)
     log("Using existing LinkedIn feed tab", { tabId: tab.id })
     return tab
   }
 
-  const tab = await chrome.tabs.create({ url: LINKEDIN_FEED_URL, active: true })
+  const tab = await chrome.tabs.create({ url: LINKEDIN_FEED_URL, active: false })
   await waitForTabLoad(tab.id)
   await sleep(4000)
   log("Opened new LinkedIn feed tab", { tabId: tab.id })
@@ -107,17 +154,16 @@ async function ensureFeedScraperReady(tabId) {
   await sleep(500)
 }
 
-async function openOrFocusDashboardTab() {
+async function ensureDashboardTab() {
   const tabs = await chrome.tabs.query({ url: "http://localhost:3000/*" })
 
   if (tabs.length > 0) {
     const tab = tabs[0]
-    await chrome.tabs.update(tab.id, { active: true })
     log("Using existing dashboard tab", { tabId: tab.id })
     return tab
   }
 
-  const tab = await chrome.tabs.create({ url: DASHBOARD_URL, active: true })
+  const tab = await chrome.tabs.create({ url: DASHBOARD_URL, active: false })
   await waitForTabLoad(tab.id)
   await sleep(250)
   log("Opened new dashboard tab", { tabId: tab.id })
@@ -145,6 +191,19 @@ async function syncDashboardTab(tabId, posts) {
 
   log("Dashboard storage updated", { tabId, count: posts.length, now })
 }
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.action !== "SCRAPE_STATUS") return
+
+  const payload = {
+    stage: msg.stage || "status",
+    message: msg.message || "",
+    detail: msg.detail || null,
+  }
+
+  publishProcessUpdate(activeDashboardTabId, payload).then(() => sendResponse({ success: true }))
+  return true
+})
 
 function waitForTabLoad(tabId) {
   return new Promise((resolve) => {

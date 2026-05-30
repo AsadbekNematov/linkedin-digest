@@ -5,10 +5,24 @@ const TARGET_COUNT_KEY = "linkedin-digest-target-count"
 const DEBUG = true
 const PRIMARY_POST_SELECTORS = ".feed-shared-update-v2, .occludable-update, [data-urn], article, [role='article']"
 const POST_LINK_SELECTORS = "a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/pulse/']"
+const TRUE_POST_LINK_SELECTORS = "a[href*='/feed/update/activity:'], a[href*='/feed/update/share:'], a[href*='/posts/'], a[href*='/pulse/']"
 const FALLBACK_CONTAINER_SELECTORS = "[data-urn], article, [role='article'], .feed-shared-update-v2, .occludable-update"
 
 function log(...args) {
   if (DEBUG) console.log("[LinkedIn Digest][content]", ...args)
+}
+
+function reportStatus(stage, message, detail = null) {
+  try {
+    void chrome.runtime.sendMessage({
+      action: "SCRAPE_STATUS",
+      stage,
+      message,
+      detail,
+    }).catch(() => {})
+  } catch {
+    // Best-effort telemetry only.
+  }
 }
 
 function logGroup(label, details) {
@@ -20,6 +34,25 @@ function logGroup(label, details) {
 
 function getFeedRoot() {
   return document.querySelector("main") || document.body
+}
+
+function isScrollableElement(element) {
+  if (!element || element === document.body) return false
+
+  const style = window.getComputedStyle(element)
+  const overflowY = style.overflowY
+  return (overflowY === "auto" || overflowY === "scroll") && element.scrollHeight > element.clientHeight + 120
+}
+
+function getScrollContainer(startNode) {
+  let node = startNode || getFeedRoot()
+
+  while (node && node !== document.body) {
+    if (isScrollableElement(node)) return node
+    node = node.parentElement
+  }
+
+  return document.scrollingElement || document.documentElement || document.body
 }
 
 function findFallbackContainer(anchor) {
@@ -54,7 +87,7 @@ function findFallbackContainer(anchor) {
 }
 
 function collectCandidateArticles() {
-  const primary = Array.from(document.querySelectorAll(PRIMARY_POST_SELECTORS))
+  const primary = Array.from(document.querySelectorAll(PRIMARY_POST_SELECTORS)).filter((article) => !isLikelyComposerCard(article))
   if (primary.length > 0) return { source: "primary", articles: primary }
 
   const anchors = Array.from(document.querySelectorAll(POST_LINK_SELECTORS))
@@ -65,7 +98,7 @@ function collectCandidateArticles() {
   for (const anchor of anchors.slice(0, 200)) {
     const seed = anchor.closest("[data-urn], article, [role='article']") || anchor.parentElement || anchor
     const container = findFallbackContainer(seed)
-    if (!container || seen.has(container)) continue
+    if (!container || seen.has(container) || isLikelyComposerCard(container)) continue
     seen.add(container)
     fallback.push(container)
   }
@@ -127,6 +160,51 @@ function normalizeLinkedInUrl(rawUrl) {
   } catch {
     return String(rawUrl).replace(/\/(?:reactions|comments)\/?.*$/i, "/")
   }
+}
+
+function canonicalUrlFromUrn(rawUrn) {
+  const urn = (rawUrn || "").trim()
+  if (!urn) return null
+
+  const normalized = urn
+    .replace(/^urn:li:/i, "")
+    .replace(/^activity:/i, "activity:")
+    .replace(/^share:/i, "share:")
+
+  const activityMatch = normalized.match(/^(activity|share):([^/?#]+)/i)
+  if (!activityMatch) return null
+
+  return `https://www.linkedin.com/feed/update/${activityMatch[1].toLowerCase()}:${activityMatch[2]}/`
+}
+
+function getCanonicalLinkedInPostUrl(article) {
+  const dataUrn =
+    article.getAttribute("data-urn") ||
+    article.dataset?.urn ||
+    article.querySelector("[data-urn]")?.getAttribute("data-urn") ||
+    article.querySelector("[data-urn]")?.dataset?.urn ||
+    ""
+  const urnUrl = canonicalUrlFromUrn(dataUrn)
+  if (urnUrl) return urnUrl
+
+  const permalinkLink = Array.from(article.querySelectorAll(TRUE_POST_LINK_SELECTORS))
+    .map((node) => node.href)
+    .find((href) => /linkedin\.com\/(feed\/update\/(activity|share):|posts|pulse)\//i.test(href))
+
+  return normalizeLinkedInUrl(permalinkLink || "https://www.linkedin.com/feed/")
+}
+
+function isLikelyComposerCard(article) {
+  const text = cleanPostText(article.innerText || article.textContent || "")
+  const firstLine = text.split(/\n+/)[0]?.trim().toLowerCase() || ""
+
+  return (
+    /^start a post$/.test(firstLine) ||
+    /^create a post$/.test(firstLine) ||
+    /^start a conversation$/.test(firstLine) ||
+    /^write article$/.test(firstLine) ||
+    /^share a photo$/.test(firstLine)
+  )
 }
 
 function normalizeCountText(rawText) {
@@ -282,9 +360,8 @@ async function scrapePost(article) {
       return null
     }
 
-    // Post URL — try to find the permalink
-    const linkEl = article.querySelector("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/pulse/']")
-    const linkedinUrl = normalizeLinkedInUrl(linkEl?.href || "https://www.linkedin.com/feed/")
+    // Post URL — prefer canonical activity URN, then visible permalink.
+    const linkedinUrl = getCanonicalLinkedInPostUrl(article)
 
     // Reactions count
     const { reactions, comments } = inferSocialCounts(article, rawArticleText)
@@ -316,16 +393,25 @@ async function scrollAndCollect(targetCount = 30) {
   const posts = []
   let scrollAttempts = 0
   let stagnantRounds = 0
-  const maxScrolls = Math.max(targetCount * 4, 24)
+  const maxScrolls = Math.max(targetCount * 6, 36)
 
   log("Starting scrape", { targetCount, maxScrolls, url: location.href })
+  reportStatus("starting", "Starting LinkedIn scrape", { targetCount, maxScrolls, url: location.href })
 
-  while (posts.length < targetCount && scrollAttempts < maxScrolls && stagnantRounds < 5) {
-    const { source, articles, anchorsFound } = collectCandidateArticles()
+  while (posts.length < targetCount && scrollAttempts < maxScrolls && stagnantRounds < 8) {
+    const { source, articles, anchorsFound, anchorsDetails } = collectCandidateArticles()
     let addedThisRound = 0
+    const scrollTarget = getScrollContainer(articles[0] || document.querySelector(POST_LINK_SELECTORS) || getFeedRoot())
 
     log("Scan round", {
       round: scrollAttempts + 1,
+      source,
+      articlesFound: articles.length,
+      anchorsFound: anchorsFound || 0,
+      seenCount: seen.size,
+      collectedCount: posts.length,
+    })
+    reportStatus("scan", `Scanning round ${scrollAttempts + 1}`, {
       source,
       articlesFound: articles.length,
       anchorsFound: anchorsFound || 0,
@@ -341,7 +427,7 @@ async function scrollAndCollect(targetCount = 30) {
         bodyChildren: document.body?.children?.length || 0,
         anchorsWithPostLinks: document.querySelectorAll(POST_LINK_SELECTORS).length,
         sampleBodyText: document.body?.innerText?.slice(0, 500) || "",
-        anchorsSample: (typeof anchorsDetails !== 'undefined') ? anchorsDetails : undefined,
+        anchorsSample: anchorsDetails,
       })
     }
 
@@ -368,6 +454,14 @@ async function scrollAndCollect(targetCount = 30) {
           comments: post.comments,
           timestamp: post.timestamp,
         })
+        reportStatus("captured", `Captured post from ${post.author || "Unknown"}`, {
+          author: post.author,
+          authorTitle: post.authorTitle,
+          reactions: post.reactions,
+          comments: post.comments,
+          timestamp: post.timestamp,
+          collectedCount: posts.length,
+        })
       } else {
         log("Skipped candidate after scrape", {
           keyPreview: String(key).slice(0, 120),
@@ -385,9 +479,22 @@ async function scrollAndCollect(targetCount = 30) {
       stagnantRounds,
       scrollAttempts: scrollAttempts + 1,
       collectedCount: posts.length,
+      scrollTarget: scrollTarget?.tagName || scrollTarget?.nodeName || "unknown",
+    })
+    reportStatus("scrolling", "Scrolling feed for more posts", {
+      addedThisRound,
+      stagnantRounds,
+      scrollAttempts: scrollAttempts + 1,
+      collectedCount: posts.length,
     })
 
-    window.scrollBy({ top: Math.max(window.innerHeight * 1.6, 1000), behavior: "instant" })
+    if (scrollTarget && typeof scrollTarget.scrollBy === "function") {
+      scrollTarget.scrollBy({ top: Math.max(window.innerHeight * 1.8, 1200), behavior: "instant" })
+    } else if (scrollTarget) {
+      scrollTarget.scrollTop += Math.max(window.innerHeight * 1.8, 1200)
+    } else {
+      window.scrollBy({ top: Math.max(window.innerHeight * 1.8, 1200), behavior: "instant" })
+    }
     await sleep(stagnantRounds > 0 ? 2200 : 1400)
     scrollAttempts++
   }
@@ -397,6 +504,11 @@ async function scrollAndCollect(targetCount = 30) {
     actualCount: posts.length,
     source: posts.length > 0 ? "captured" : "empty",
     sample: posts.slice(0, 3),
+  })
+  reportStatus("complete", "LinkedIn scrape complete", {
+    targetCount,
+    actualCount: posts.length,
+    source: posts.length > 0 ? "captured" : "empty",
   })
 
   return posts.slice(0, targetCount)

@@ -18,6 +18,14 @@ import { PostDetailPanel } from "@/components/PostDetailPanel"
 import { mockPosts, type Post, type Category } from "@/lib/mockData"
 
 const MASONRY_COLS = { default: 3, 1280: 3, 1024: 2, 768: 2, 640: 1 }
+const PROCESS_LOG_KEY = "linkedin-digest-process-log"
+
+type ProcessLogEntry = {
+  at: string
+  stage: string
+  message: string
+  detail: unknown | null
+}
 
 function groupByTime(posts: Post[]): { label: string; posts: Post[] }[] {
   const groups: Record<string, Post[]> = {
@@ -78,6 +86,40 @@ function subscribeToDigestState(callback: () => void) {
   }
 }
 
+function readProcessLogState() {
+  if (typeof window === "undefined") return [] as ProcessLogEntry[]
+
+  try {
+    return JSON.parse(localStorage.getItem(PROCESS_LOG_KEY) || "[]") as ProcessLogEntry[]
+  } catch {
+    return [] as ProcessLogEntry[]
+  }
+}
+
+function subscribeToProcessLog(callback: () => void) {
+  if (typeof window === "undefined") return () => {}
+
+  const handler = (event?: Event) => {
+    const detail = (event as CustomEvent<ProcessLogEntry>).detail
+    if (detail) {
+      console.log(`[LinkedIn Digest][page] ${detail.stage}: ${detail.message}`, detail.detail)
+    }
+    callback()
+  }
+
+  window.addEventListener("storage", handler)
+  window.addEventListener("linkedin-digest-process-log", handler)
+
+  return () => {
+    window.removeEventListener("storage", handler)
+    window.removeEventListener("linkedin-digest-process-log", handler)
+  }
+}
+
+function getProcessLogSnapshot() {
+  return JSON.stringify(readProcessLogState())
+}
+
 function getDigestSnapshot() {
   return JSON.stringify(readDigestState())
 }
@@ -88,6 +130,8 @@ export default function Home() {
     posts: Post[]
     lastRefresh: string | null
   }
+  const processLogSnapshot = useSyncExternalStore(subscribeToProcessLog, getProcessLogSnapshot, getProcessLogSnapshot)
+  const processLog = JSON.parse(processLogSnapshot) as ProcessLogEntry[]
 
   const [activeCategory, setActiveCategory] = useState<Category | null>(null)
   const [phase, setPhase] = useState<Phase>("idle")
@@ -103,6 +147,7 @@ export default function Home() {
       const nextCount = Number(detail?.count) || 30
       setTargetCount(nextCount)
       localStorage.setItem("linkedin-digest-target-count", String(nextCount))
+      console.log(`[LinkedIn Digest][page] target count synced: ${nextCount}`)
     }
 
     window.addEventListener("linkedin-digest-target-count-sync", handleCountSync)
@@ -116,6 +161,7 @@ export default function Home() {
       if (!detail) return
 
       setPhase("idle")
+      console.log(`[LinkedIn Digest][page] refresh complete: ${detail.success ? "success" : "failed"}`, detail)
 
       if (detail.success) {
         const capturedCount = detail.count ?? posts.length
@@ -150,6 +196,7 @@ export default function Home() {
   }, [posts.length])
 
   const handleRefresh = async () => {
+    console.log(`[LinkedIn Digest][page] refresh requested: ${targetCount}`)
     setPhase("fetching")
     window.dispatchEvent(
       new CustomEvent("linkedin-digest-start-refresh", {
@@ -241,6 +288,34 @@ export default function Home() {
         </div>
 
         <div className="max-w-7xl mx-auto px-4 py-8 flex flex-col gap-8">
+          {(phase !== "idle" || processLog.length > 0) && (
+            <div
+              className="rounded-2xl p-5"
+              style={{
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                backdropFilter: "blur(12px)",
+              }}
+            >
+              <p className="text-xs font-semibold mb-3 uppercase tracking-widest" style={{ color: "#374151" }}>
+                Live Process
+              </p>
+              <div className="flex flex-col gap-2 text-xs font-mono">
+                {processLog.slice(-6).map((entry, index) => (
+                  <div
+                    key={`${entry.at}-${entry.stage}-${index}`}
+                    className="flex items-start gap-3 rounded-xl px-3 py-2"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}
+                  >
+                    <span style={{ color: "#6b7280" }}>[{entry.at}]</span>
+                    <span style={{ color: "#60a5fa" }}>{entry.stage}</span>
+                    <span style={{ color: "#f0f0ff" }}>{entry.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Hero */}
           <TypewriterHero />
 
