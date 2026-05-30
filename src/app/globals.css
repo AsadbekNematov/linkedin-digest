@@ -149,6 +149,25 @@
 .scrollbar-thin::-webkit-scrollbar-track { background: var(--app-card); }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--app-border-bright); border-radius: 2px; }
 
+/* Global themed scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #07070f;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.5);
+}
+::-webkit-scrollbar-corner {
+  background: #07070f;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
